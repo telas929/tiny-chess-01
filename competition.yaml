@@ -1,0 +1,551 @@
+# Tiny chess 01: an agent/v1 competition whose entry is a chess engine of at most 4,096 bytes of Python.
+# Each trial the entry (Python 3.13 main.py, nothing else) plays 8 games through the env, one against each of a
+# fixed gauntlet of eight house engines, the make.fun team's own (MIT, no third-party code), and is rated by an
+# Elo estimate anchored to their calibrated ratings. Validated by server/competitions/load.ts against
+# contracts/competition.ts; seeded by `npm run db:seed`.
+#
+# Why 4 KB of Python (contest-design.mdc: the winner must beat the best public solution). Unbounded
+# chess is Stockfish's, so no open contest's winner would beat it; 4 KB of Python is a niche with a
+# public champion small enough to beat: sunfish's 4k entry (nnue_4k/pst_entry.py, packed to 3,649
+# bytes), the house baseline every prize must clear. The title keeps "of Python": 4 KB C++ engines
+# (ice4, 4ku) are far stronger, and Python alone (runtimes: [python3.13]) keeps the bytes comparable
+# and keeps V8's speed from beating CPython's bar by speed alone.
+#
+# The three sealed programs, each built from src/ by scripts/competitions/build-agent-bundle.ts (no
+# hand edits; `--check` proves a committed bundle is a fresh build):
+#   generator/draw.mjs  node22: draws one instance from /input/seed.json (a drand round's seed,
+#                       server/competitions/instance.ts instanceTrialSeed) into /output/input (prompt.txt,
+#                       the brief and the only file the entry sees; env/gauntlet.json, the env's: the 8
+#                       games, the house seed, the ply cap, the adjudication margin and the move limit) and
+#                       /output/reference (gauntlet.json, the scorer's: the games, the anchors and the Elo
+#                       floor and cap). One game per opponent, each on its own opening, all different, from
+#                       the 40-line book (src/shared/book.ts); the entry's colour alternates by rung and by
+#                       the seed file's trial index t (src/generator/instance.ts colourOf: four whites and
+#                       four blacks, each opponent met with both colours over two consecutive trials); a
+#                       practice and a scored draw differ only in their seed and t, so nothing is sealed
+#                       beside the bundle. The brief (src/generator/instance.ts renderBrief) says the size
+#                       rule, that no model is called, and the wall time: 1,800 s a trial, the house's
+#                       thinking included (about 3 to 6 minutes at the env's half a CPU), so about 3 s a
+#                       move on average though one move may take 10 s.
+#                       generator/calibration.json, written by calibration/round-robin.ts, is the
+#                       round-robin the anchors are fitted from (src/shared/anchors.ts), sealed with the
+#                       generator so every kit publishes it
+#   env/server.mjs      node22: the games (src/server/match.ts holds their rules): POST /game, /move and
+#                       /resign; the house engines (src/chess/engine.ts's alpha-beta at depths 2 to 4 and at
+#                       100,000 to 2,000,000 nodes, played by src/chess/fast.ts: the same search made
+#                       faster, the same move and node count in every position) answer in its own process
+#                       and call no model; the export state.json (every game's moves, result and reason)
+#                       and transcript.ndjson; the move limit is read on its clock and nothing else is
+#   scorer/score.mjs    node22: re-plays every game of a trial's state export from its moves under the
+#                       rules and checks how each ended, then writes the trial's Elo (src/shared/elo.ts
+#                       performanceRating), working, wins, draws, losses and spare_plies
+#                       (src/scorer/score.ts)
+# generator_sha256, env_sha256 and scorer_sha256 are the three directories' tree digests (load.ts
+# treeSha256). Change the generator and instance.yaml must be drawn again (remove it and rerun the
+# practice tool with the recorded --round, --signature and limits).
+#
+# instance.yaml is the trials sidecar the practice tool wrote (`node scripts/competitions/instance.ts
+# practice --competition tiny-chess-01 --round 33447412 --signature <its signature> --cpus 1
+# --memory-mb 512 --pids 64 --wall-budget-sec 120`, signature in tests/fixtures/close-the-books/
+# practice-round.json): the practice round (drand quicknet 33447412, 2026-10-28T00:00:00Z, before
+# opens_at; chess-engine-01's), each of the 3 practice trials' seed and digests, the scored round
+# (34245512, 2026-11-24T17:05:00Z, the first at or after the final phase's start) with its 6 trials,
+# and the generator's own limits. The re-date of 2026-11-09 (#169) removed the sidecar and reran the same
+# command (under MAKEFUN_SANDBOX=process): the practice block came back byte for byte, and only the scored
+# beacon moved. The re-date of 2026-11-10 (the owner's ask: no delay between the deadline and the draw)
+# moved the final phase to 5 minutes after the deadline and the scored beacon by hand with it, from 34247812
+# (2026-11-24T19:00:00Z) to 34245512, fixed before it is emitted; the practice block stands as it was. The
+# staged final of 2026-11-12 (the Trials below) changed the generator (8 games a trial), so the sidecar was
+# removed and the same command rerun (MAKEFUN_ALLOW_PROCESS_SANDBOX=1 MAKEFUN_SANDBOX=process): the practice
+# round, signature and seeds stand and its digests moved; the scored block came back as it was (34245512, the
+# first round at or after the final's 17:05 start), and nothing was edited by hand. The release re-draws the
+# practice trees in place (server/competitions/practice-draw.ts practiceTreeDue: 'stale' on the new digests).
+#
+# The ladder: eleven house engines (src/shared/gauntlet.ts LADDER), the trial's eight its top eight
+# (depth-2 to nodes-2M). Their anchors are a Bradley-Terry fit to a round-robin of 2,720 games
+# (generator/calibration.json): every pair of rungs at most 4 apart (34 pairs), each of the book's 40
+# openings with both colours, 2 virtual draws a pair, random at 0. The top step (nodes-1M to nodes-2M,
+# 45 Elo) is under the 60 meant between neighbours but within a pair's standard error; anchors.ts says
+# why it stays. The Elo cap is the top anchor plus 400: 2,112.
+#
+# Entry caps (contracts/competition.ts AgentHarness.entry; intake checks the snapshot): main.py at most
+# 4,096 bytes as committed (the rule), and the whole tree, main.py included, at most 8,192 bytes, no
+# file over 4,096, so nothing can hide a payload beside main.py (the rules forbid reading another file
+# anyway). A license must fit too: MIT, BSD, ISC and 0BSD do; the GPL's 35 KB text does not, so a GPL
+# entry (a sunfish fork: the baseline is GPL-3.0-only) comes in as a `makefun bundle` source upload with a
+# LICENSE holding only its SPDX tag (server/repos/osi-licenses.ts reads `SPDX-License-Identifier:`). The
+# root's ruling: no new contract field; the rules say so in one line.
+#
+# No model calls. A chess engine in 4 KB has no room for one and the house pays for none; the rules make
+# any model call a disqualification. The LLM agent floor (grader/agent-score.ts heldToFloor) would zero and
+# refuse an entrant's run with no model call on an agent/v1 harness without a house target, so the harness
+# says model_calls: optional, which waives it for every entry. The contract still requires an inference
+# block with minimums of 1 and above $0 (it cannot say zero), so it is the smallest it can be: one model
+# (claude-haiku-5-5, the root's cheapest allowlisted id), 1 request of 1 output token, at most 4,096 bytes,
+# $0.01 a trial, on the entrant's own key if any (an entry with no key is answered 401 by the gateway).
+# max_total_usd and dev_daily_usd ($1, $0.10) cap house-paid entry-lane spend, which is none: an
+# entrant's entry runs on the entrant-key lane (grader/worker.ts housePaysEntryLane), never on masq.
+#
+# The house baseline is agent/sunfish-4k (the house's, flagged baseline, never in a kit): sunfish's
+# nnue_4k/pst_entry.py at thomasahle/sunfish e396948acbd80cdcbad3dccfb07e878fba9df8f4 (2026-08-27,
+# GPL-3.0-only), its UCI main and clock replaced by house/sunfish-4k/adapter.py's env driver and a
+# 50,000-node cap a move (house/sunfish-4k/probe.py: the largest budget whose slowest move stays under
+# 3 s on one CPU), stripped as upstream's pack_entry.sh does, minified (python-minifier 3.2.0) and packed
+# as an lzma payload with its unpacker: 3,649 bytes (house/sunfish-4k/build.json; build.py rebuilds it).
+# On the 3 practice instances of instance.yaml it rated 1,326, 1,396 and 1,253 (3, 4 and 3 wins of 8; a
+# mean of 1,325) on their 8-game draw, and on the 6-game practice draw of 2026-11-13 (the first 6 of those
+# games, move for move: the house engines and the 50,000-node cap are deterministic and a game never
+# depends on a later one) it rates 1,364, 1,451 and 1,279, a mean of 1,365, since it lost every game it
+# played against nodes-1M and nodes-2M there (3.5, 4 and 3 points of 6 through performanceRating), each
+# between depth-4 (1,199) and nodes-250k (1,497): the 8-game figures are `grade-local --driver docker --house
+# --baseline --instances 3` on a dev kit of the 8-game draw, in Docker on a laptop, 2026-11-12,
+# each live pass 631 to 650 s (under half the 1,800 s budget), the house's own time 101 to 137 s of it
+# (inside the house clock's 330 s), its slowest move 3,022 ms, every replay byte for byte. On the 16-game
+# draw before it (2026-11-09) it rated 1,326, 1,464 and 1,290, a mean of 1,360, each live pass 1,243 to
+# 1,369 s. These are laptop figures, never production's (contest-sizing.mdc): the Elos hold anywhere, the
+# house engines and the 50,000-node cap being deterministic; the seconds do not. Its 16 placement games on
+# chess-engine-01's kit (house/sunfish-4k/placement.json) rate about 1,280 on these anchors and 1,436 on
+# chess-engine-01's. A prize needs a mean Elo above its mean with the 90%
+# paired interval of the per-instance lead above 0 (prize_requires_beating_baseline).
+#
+# Trials. Changed 2026-11-12 (the staged final; the owner's decision covers changing this
+# open contest's published grading rules): a trial was 16 games (each opponent twice, once with each colour) in a
+# 3,600 s wall and every entry played all 6 scored instances, about 5 days of grading at 432 entries. A trial is
+# now 8 games, one against each house engine, the entry's colour alternating by rung and by trial index, on
+# practice and scored instances alike, in a 1,800 s wall: the same seconds a game, so the published pace (about 3 s
+# a move) and the 10 s move limit stand. An entry searches to a fixed depth or node count by rule, so its time is
+# per game: the games and the wall halve together, or entrants re-tune their search to the old wall and the saving
+# is gone. The ladder, the anchors, the env and the scorer did not change (env_sha256 and scorer_sha256 are as
+# they were, only generator_sha256 moved, and the calibration stands), so no entry's interface broke. The house
+# clock (grader/house-clock.ts) halved with the wall: 330 s of the house's time charged, a 3,000 s ceiling.
+#
+# Cheaper trials, 2026-11-13 (the owner: "anything we can do to optimize the tiny chess grading we abs should,
+# can even lose some accuracy doesn't matter"; production measured a pass at about 1,100 s and 1,000 to 1,100
+# core-seconds, the entry's engine about 75 to 80% of them and the house's about 15%, and 13% of trials at
+# the 1,800 s wall). Two changes:
+#   - The env plays the house engines on src/chess/fast.ts, engine.ts's search with the same move, node
+#     count and score in every position (calibration/fast-engine.test.ts: every position of 40 played games
+#     and the perft suite's walks node for node; the search on 1,170 positions at depths 1 to 4, 284 at
+#     nodes-100k and nodes-250k and 22 at nodes-500k to nodes-2M; 1,918 of generator/calibration.json's
+#     2,080 alpha-beta games, every pair's included, replayed on s4 to their recorded moves_sha256, none
+#     different), about 2.7 times as fast (on s4: 1,574 to 1,884 knps for engine.ts, 4,267 to 5,089 for
+#     fast.ts on the same positions). No rung plays another move, so the anchors, the calibration and every replay stand; only
+#     env_sha256 moved, and a trial's house time is about a third of what it was. engine.ts stays as it is
+#     (chess-engine-01's byte for byte, and one of the calibration's CODE_FILES).
+#   - A practice trial plays 6 games, the scored draw's first 6 (depth-2 to nodes-500k, the same openings,
+#     colours and house seed), nodes-1M and nodes-2M only in the final (src/generator/instance.ts
+#     PRACTICE_GAMES, by the seed file's purpose); generator_sha256 moved. The two top rungs were about 60% of
+#     a practice trial's house thinking (about 450 to 500 s of a pass) and two of its 8 games. The reference
+#     keeps every anchor, the Elo floor 0 and the cap 2,112, and the scorer did not change (scorer_sha256 as
+#     it was). What it costs (scratch: the calibration games, #109's method, 400,000 trials each): a practice
+#     trial's Elo SD for depth-4 114 at 8 games and 116 at 6, for nodes-100k 117 and 132, their means 1,188
+#     and 1,195, 1,392 and 1,409, and the share clearing the 1,154 floor 78.2% and 76.5%, 98.8% and 98.3%;
+#     the Fisher information about the Elo falls 8% at the floor, 16% at the baseline's 1,325 and 29% at
+#     1,500. The floor stays 1,154: the baseline's 6-game practice mean, 1,365, sits further above it. Scores
+#     posted on 8-game practice trials stay; the final's 6 instances keep 8 games, so no prize rests on the
+#     cut.
+#
+# 6 final instances, the owner's call of 2026-11-09 (decision tray, #177: "Yes, grade 6 runs"), over
+# grading.mdc's start of 3 for an agent competition; the practice draw stays at 3. The final is staged
+# (harness.trials.staged, contracts/competition.ts AgentStagedFinal): an entry needs a practice Elo of at least
+# 1,154 (practice_floor) to enter it, read from the entrant's final entry at the deadline (one never graded on
+# practice is graded there first, and one whose practice run fails with no score is graded once more and, failing
+# again, goes on unweighed); every entry past the floor runs the first scored instance once, live and
+# unreplayed; the 50 entrants (contenders, 2.5 x the 20 paid places) with the highest Elo there, any tied with
+# the 50th, and the baseline run all 6, each trial replayed. Contenders rank on their mean Elo over the 6 and every
+# paid place is a contender's; an entry that stops at the first instance ranks below every contender by its Elo
+# there, and one under the floor below those by its practice Elo. The floor is an absolute score set from the
+# baseline's calibrated practice strength less two instance SDs (contest-sizing.mdc), never from one practice
+# instance or a live row, and it stays 1,154 through the re-draw; it sits well under the baseline's practice
+# Elos (below), so one unlucky practice run keeps out no entry that could place.
+#
+# The prize gate is the 90% paired t-interval of an entry's per-instance Elo lead over the baseline, which must lie
+# above 0. Measured, as an estimate, from the calibration games alone (#109's method, 2026-11-09, rerun for 8 games
+# on 2026-11-12): the house engines are deterministic, so a trial's only chance is its opening draw, and
+# generator/calibration.json holds every pair's game in every opening with both colours; trials drawn from it (8
+# openings without replacement, one a rung; seeds 109 and 7) for depth-4 and nodes-100k, the two rungs either side
+# of sunfish, rated by performanceRating on these anchors (self-play scores half a point; depth-4 never met
+# nodes-2M, so that game is drawn from the anchors). At 16 games (both colours a rung) they gave a per-trial Elo SD
+# of about 81 and 86, a correlation of 0.16 and an SD of the per-instance lead (sigma_d) of about 108, so a 90%
+# half-width at 6 instances of 2.015 x 108 / sqrt(6), about 89 Elo (182 at 3, with t's 2.920). At 8 games (one
+# colour a rung, alternating; 400,000 trials) the per-trial SD is about 114 and 117, the correlation 0.14 and
+# sigma_d about 151: the half-width at 6 instances is 2.015 x 151 / sqrt(6), about 125 Elo (255 at 3). An entry
+# clears the gate with a lead near 125 over the 6 instances, against about 180 at three 16-game instances for the
+# same grading time; nodes-100k is about 205 ahead of depth-4 on average.
+#
+# The fit (contest-sizing.mdc; server/competitions/grading-budget.ts prices it on PRODUCTION_TRIAL_SLOTS, 24 trial
+# slots). On production (2026-11-12) a floor-passing entry's 16-game trial measured 2,800 s live and 2,740 s of
+# replay, and 15% of practice trials hit the 3,600 s wall; at 8 games each is half. The staged final then computes
+# from 11.3 h at 432 entrants, if about 30% clear the floor as measured (73 of the 241 entries with a scored practice
+# trial on production, 2026-11-12), to 16.5 h if nobody is floored, since entrants see the floor and can resubmit
+# (14.3 h at 1,000 and 19.7 h at 2,000 at the measured share; the old rules, every entry on all 6 instances live and
+# replayed: 119 h, 276 h and 552 h), and 14.6 h at 432 with every pass at the 1,800 s wall, well inside the 7-day
+# final phase; the contenders alone at their worst (50 and the baseline, every trial at the wall live and on the
+# replay) are 51 x 6 x 3,600 = 1,101,600 trial-seconds, 45,900 s (12.75 h) on the 24 slots. It is not under 12 h at
+# 2,000: the qualifying instance alone is every floor-passing entry's 8-game trial, so
+# tests/unit/grading-budget-bundles.test.ts lists the bundle in KNOWN_OVER_BUDGET (the gate credits no floor and
+# prices a trial at wall / 3). Its 50 contenders sit under the authoring rule's 3 x the 20 paid places, 60, on
+# purpose: 60 would compute 13.15 h at 432 entrants on the measured shape above (11.36 h at 50), against the 12 h aim.
+# What the cut costs, against true skill: a model made before the final's entries exist
+# (scripts/competitions/staged-cut-model.mjs: 4,000 seeded fields, skill SD 247 Elo and instance noise 118 at 8
+# games, tau / sigma 2.09, the field's mean set so that 30% clear the floor on one practice draw, each scored trial
+# at its wall with the same chance in both arms and scoring 0 there), the staged final at its 50 contenders against
+# a full final with every entry on all 6 of the same trials and no floor. The wall share is measured on production's
+# stored 16-game practice trials (one practice instance, under production load, 2026-11-12; no 8-game trial had
+# run when this was written), each split into its two 8-game halves and charged as the house clock charges: 3.4% of
+# the halves of entries at or above the floor run past the 1,800 s wall (7 of 206; p50 1,187 s, p90 1,683 s), so
+# about 5% of a floor-passer's first scored trials are expected at the wall (3% to 9% plausible, 12% the
+# pessimistic row; the hits are specific slow entries, each a little over, and an instance 10% slower than practice
+# would put about 14% over). At 5%, of the prize money, the share reaching the 20 truly best entries is 98.7% of
+# what the full final delivers at 432 entrants and 95.1% at 2,000; the truly best 20 who finish in a paid place are
+# 97.4% and 90.2% as many, the paid places' mean skill is 99.4% and 98.3% as far above the field's, and the truly
+# best entry takes 1st 99.9% as often at both (with no wall 99.1% and 96.5% of the money, at 12% 99.4% and 96.6%).
+# The floor keeps out at least one true top-20 entry in 6.4% of finals at 432 entrants (7.1% with no wall), 0.33% of
+# the true top 20 an entry at a time, and 0.1% at 2,000 (under 0.01% an entry): not the "under 1% of finals" an
+# earlier model of this note gave. On a field as tight as werewolf-agent-01's (tau / sigma 0.73) the floor, set for
+# the measured spread, keeps out 38% of the true top 20 at 432 entrants and 24% at 2,000, and the losses pass 10%:
+# at 5% at the wall, 90.5% and 84.5% of the money, 81.6% and 71.0% of the truly best 20 in a paid place, 91.9% and
+# 90.8% of the skill, 1st 95.2% and 92.5% as often. No
+# model call is made, so the trials cost grader time, not money. No field caps the number of entrants
+# (submission_rule caps each entrant); the results publish once the grades are done (scores: after_finalize).
+#
+# The prizes are the release's $500 table, $100 / $70 / $50 / $20 x7 / $14 x10 (memecoin-backtest-48h-01's),
+# paid by the house on the manual rail in USDC on Solana (payouts auto, as chess-engine-01's). The tie-break
+# is Plies to spare (spare_plies: the plies left under the cap in the games won, more first), the scorer's
+# efficiency column: agent/v1 records no per-entry size the leaderboard could sort on, so the smaller
+# main.py is not a column. The rules quote the numbers here (the games, the opponents and their anchors,
+# the ply cap, the margin, the move limit, the wall time, the size caps, the baseline, the trials, the
+# rounds, the limits, the submission caps, the prize table); tests/unit/comp-tiny-chess-01.test.ts keeps
+# the quotes in step, so change both together.
+#
+# Open (the owner, 2026-11-09: "put 1 of them live so we can start outreach", for the HackathonRadar
+# listing; it was a draft of the release of 2026-11-08 until then): status open, visibility public and
+# automation.lifecycle true, so the automation jobs lock, grade, publish and resolve it on its own clock.
+# The window is 14 days (the owner asked for shorter than 30; #168's audit): it opens 2026-11-10T17:00:00Z,
+# a day after the re-date, which leaves the baseline a day to be entered and checked before anyone can
+# enter, and closes 2026-11-24T17:00:00Z over two weekends. The final phase keeps its 7 days and starts 5
+# minutes after the deadline (2026-11-24T17:05:00Z to 2026-12-01T17:05:00Z; 2 hours after it until it was
+# re-dated 2026-11-10 on the owner's ask: no delay between the deadline and the draw), so the staged final's
+# fit above and the rules' "within 7 days of the deadline" stand.
+
+version: 1
+
+competition:
+  slug: tiny-chess-01
+  title: Build the strongest chess engine in 4 KB of Python
+  summary: Write a chess engine in at most 4,096 bytes of Python that plays 8 games a trial, one against each of a fixed gauntlet of eight house engines, from book openings drawn after the deadline; the final is staged (a practice floor, one set of openings for every entry past it, all 6 for the 50 best there), and its contenders rank on their Elo anchored to the house engines' ratings, mean over 6 trials, best first, so 1st place goes to the highest mean Elo. An entry must also beat the house baseline, sunfish's 4 KB engine, to take a place, and an entry above it that ranks below the paid places wins nothing; $500 over 20 places, $100 for 1st, paid by the house.
+  demand: Chess programmers, size-coding hobbyists and Python engine authors who want a tiny engine rated fairly and reproducibly against fixed opponents and a public 4 KB champion.
+  category: Games
+  skills: [Python, Chess, Game tree search, Size coding]
+  status: open
+  visibility: public
+  sponsor: make-fun
+  reward_usd: 500
+  opens_at: "2026-11-10T17:00:00Z"
+  deadline: "2026-11-24T17:00:00Z"
+  description: |-
+    Write a chess engine in at most 4,096 bytes of Python and play it against a fixed gauntlet of eight house engines, from an alpha-beta search 2 plies deep up to one of 2,000,000 nodes a move. Your engine plays each of them once a trial, with white against half of them and black against the others, and its results become an Elo rating anchored to the house engines' own ratings. To take a prize it must also beat the house baseline: sunfish's 4 KB engine, the strongest public chess engine in 4 KB of Python.
+
+    ## Context
+    Each trial is 8 games. Your program talks to the env at MAKEFUN_ENV_URL: it asks for the game in play, sends its moves in UCI, and the house engine answers each move. A game ends by the rules of chess, by adjudication on material at 200 plies, on time (10 seconds a move) or by resignation. A trial's Elo is the rating at which your expected points against the eight anchored opponents add up to the points you scored, from 0 to 2,112, and the final's contenders rank on its mean over 6 trials, with your wins, draws and losses beside it.
+
+    Every game starts from a book opening. Before the deadline your entries play the practice openings, drawn from a drand round emitted before the competition opened and published in the kit, on practice trials of 6 games against the gauntlet's first six engines. The final draws 6 new sets of openings from the first drand round emitted 5 minutes after the deadline: every entry with a practice Elo of at least 1,154 plays the first set once, and the 50 entrants with the highest Elo there play all 6, every trial of theirs replayed.
+
+    ## Deliverables
+    - A public GitHub repository owned by your own GitHub account, created after the competition opens, under an OSI-approved license, with your engine at main.py (Python 3.13) in the repository root; or the same files as a source bundle uploaded with `makefun bundle`
+    - The AI coding-agent transcripts of the sessions that built it (Claude Code, Codex, Cursor and others), uploaded with each submission
+
+    ## Requirements
+    - main.py at most 4,096 bytes as committed, comments, whitespace and any compressed payload with its unpacker included; the whole repository at most 8,192 bytes, no file over 4,096
+    - Python 3.13 and its standard library: main.py alone is the engine, and it reads, imports or runs no other file of your repository
+    - Deterministic: search to a fixed depth or a fixed number of nodes, never to a clock, and no unseeded randomness, so the replay plays the same moves
+    - No model calls: any call disqualifies the entry
+    - At most 10 seconds a move; at most 1,800 seconds of wall time a trial, the house's thinking included (about 3 seconds a move on average), 1 CPU, 512 MB and 64 processes
+    - A practice Elo of at least 1,154 to enter the final, on the entry you have in at the deadline
+    - A prize needs a mean Elo above the house baseline's, sunfish's 4 KB engine
+    - At most 5 submissions a day and 10 in all; your last submission before the deadline is your final entry
+  rules: |-
+    ## The task
+    Write a chess engine in at most 4,096 bytes of Python. Each trial it plays 8 games against the house gauntlet through the env at MAKEFUN_ENV_URL, one game after another, and the games' results are its score. It may read /input/prompt.txt (the path is in MAKEFUN_PROMPT_FILE), the brief: the trial's 8 games with their opponents, colours and openings, the env's routes and these rules in short. It exits when every game is over. Its environment also holds MAKEFUN_TRIAL_SEED, a seed for any randomness you need.
+
+    ## The size rule
+    main.py's bytes as committed count, everything included: comments, whitespace, the coding line, and a compressed payload with the code that unpacks it. It must be at most 4,096 bytes. main.py alone is the engine: it may use Python's standard library, and it reads, imports, opens or runs no other file of your repository, and no data stored anywhere but in main.py's own bytes.
+
+    The rest of the repository is held small too: the whole snapshot (every file at the submitted commit, main.py, the license, a README and the claim file included; nothing under .git) is at most 8,192 bytes, and no file in it is over 4,096. A submission over either cap is refused at intake, with its sizes. A license must fit: MIT, BSD, ISC and 0BSD all do. A GPL-licensed or other long-licensed entry (a fork of sunfish, which is GPL-3.0-only) can come in only as a `makefun bundle` source upload whose LICENSE holds just its SPDX tag (SPDX-License-Identifier: GPL-3.0-only).
+
+    ## The gauntlet
+    Eight house engines, each at a fixed strength, all the make.fun team's own code (MIT licensed; the env bundle in the kit holds them):
+    - depth-2, depth-3 and depth-4: an alpha-beta search to that many plies
+    - nodes-100k, nodes-250k, nodes-500k, nodes-1M and nodes-2M: the same search, deepened one ply at a time; a depth after the first that runs past 100,000, 250,000, 500,000, 1,000,000 or 2,000,000 nodes is dropped whole, and the last whole depth's move stands
+
+    The searches extend each leaf with a search over captures and promotions, and over every reply to a check; they order their moves by a transposition table, captures and killer moves, and evaluate material (pawn 100, knight 320, bishop 330, rook 500, queen 900) plus piece-square terms and the bishop pair; a repetition or the fifty-move rule inside the search scores 0. None reads a clock: the same position and history give the same move.
+
+    Their anchors, the ratings your Elo is measured against, come from a calibration round-robin on a ladder of eleven engines, these eight above a random mover, a greedy capturer and a depth-1 search: every pair at most 4 rungs apart (34 pairs) played each of the book's 40 openings with both colours under these rules, 2,720 games, and the ratings are the Bradley-Terry maximum-likelihood fit (a draw half a win and half a loss) with 2 virtual draws a pair, the random mover at 0. The games and the fit are in the kit with the generator (program/generator/calibration.json). The anchors: depth-2 855, depth-3 1073, depth-4 1199, nodes-100k 1392, nodes-250k 1497, nodes-500k 1596, nodes-1M 1667, nodes-2M 1712 (and below the trial's eight, random 0, greedy 348, depth-1 696).
+
+    ## The games
+    A trial holds 8 games: one against each opponent, weakest first. Each game starts from its own opening of the book (40 well-known openings, each 8 plies), drawn without replacement for the trial, so the trial's 8 openings all differ. Your colour alternates from one opponent to the next, 4 games with white and 4 with black: on the 1st, 3rd and 5th scored instances and on the 1st and 3rd practice instances you have white against depth-2, black against depth-3 and so on up the ladder, and on the others the other way round, so two instances meet every opponent with both colours. A practice trial holds the first 6 of those games, against depth-2 to nodes-500k, 3 with white and 3 with black (see Trials). A game starts from the standard start position with its opening's 8 plies played for both sides; white moves next, so when you play black the house has made its move by the time you are served the position.
+
+    A game ends:
+    - by the rules: checkmate; a draw by stalemate, by insufficient material (no pawn, rook or queen left, and at most one knight or bishop, or only bishops all on squares of one colour), by the third occurrence of a position (the same pieces, side to move, castling rights and en passant capture), or by 100 plies with no capture and no pawn move. Each draw applies at once, with no claim; a move that mates wins even when it also makes the third occurrence or the hundredth ply.
+    - at the ply cap: a game still going after 200 plies from the start position (the opening's 8 included) is adjudicated, won by the side ahead in material by at least 5, counting pawn 1, knight 3, bishop 3, rook 5 and queen 9, and otherwise drawn.
+    - on time: your move must reach the env within 10,000 ms of the env serving the position (its answer to your last move, or to /game for a game's first position). A /move, /resign or /game for the game in play that comes later loses it on time. The house's own thinking is never on your move clock.
+    - by your resignation.
+    A game in play when your program exits (a crash or a broken limit included) is lost (abandoned), and so is every game never started (unplayed). A trial that runs out of its wall time is not scored on its games: it scores 0 on every column (see Trials).
+
+    ## The env
+    Each route takes a POST of one JSON object and answers one:
+    - POST /game {}: the game in play. The first call, and the first after a game ends, starts the next game. Once every game is over it answers {"status": "done", "games", "wins", "draws", "losses"}.
+    - POST /move {"game": <n>, "move": "<uci>"}: your move in game n, which must be the game in play; the house answers with its own move.
+    - POST /resign {"game": <n>}: you give game n up, a loss.
+
+    A game answer holds "game", "games", "opponent", "opponent_name", "colour" (yours), "opening" ({"id", "name", "moves"}), "start_fen", "moves" (every move from the start position, the opening's included), "fen" (the position now), "plies", "last_move", "status" ("your_move" or "over"), "legal_moves" (yours, while it is your move), "result" ("1-0", "0-1" or "1/2-1/2", from white's side, once over), "outcome" ("win", "draw" or "loss", yours), "reason", "next_game", "move_limit_ms" and "max_plies". Moves are UCI: the from-square, the to-square and a promotion's piece in lower case (e2e4, e7e8q); castling is the king's move (e1g1, e8c8). A refused request (a 4xx: a malformed body, a move that is not legal, a game that is not the one in play) changes nothing, and the move limit keeps running.
+
+    ## Scoring
+    A trial's Elo is the rating R at which your expected points against the 8 games' opponents add up to the points you scored, a win 1, a draw 1/2 and a loss 0, where a game against an opponent anchored at A is worth 1 / (1 + 10^((A - R) / 400)) of a point in expectation. It is the maximum-likelihood rating given the anchors, found by bisection, rounded to a whole number and held between 0 and 2,112: a trial that scores no more than a player rated 0 would expect is 0, and a trial that wins every game is 2,112 (the strongest anchor plus 400). A practice trial is rated the same way on its 6 games, with the same anchors, floor and cap.
+
+    The leaderboard shows, for each entry, the mean over its trials of: Elo; Plays is the share of its trials in which it made at least one move; Wins, Draws and Losses; and Plies to spare, for each game it won the plies left under the 200-ply cap, summed over the trial (a quicker win leaves more). In the public leaderboard's rows the Elo is rounded to 3 significant figures (a mean of 1,234 shows as 1,230); your own entries' rows, the result document and the archive keep it exact, and every rank, tie and prize is decided on the exact values.
+
+    ## Trials
+    Changed 2026-11-12: a trial was 16 games in 3,600 seconds and every entry played all 6 scored sets, which needed about 5 days of grading at 432 entries. A trial is now 8 games in 1,800 seconds, the same time a game, and the final is staged as below. These rules replace the old ones for every entry, whenever it was submitted. Practice scores already posted stay as they are.
+
+    Changed 2026-11-13: a practice trial plays 6 games, the first 6 of its instance's 8 (depth-2 to nodes-500k, on the same openings with the same colours); nodes-1M and nodes-2M play only in the final, whose trials keep all 8 games. Practice scores already posted on 8 games stay as they are, and the floor below stays 1,154 (the house baseline rates about 1,365 on the 6-game practice trials). The house engines also run faster in the env, with the same moves: no opponent plays differently.
+
+    The final draws 6 instances by the sealed generator from the first drand quicknet round emitted at or after the final phase starts, 5 minutes after the deadline (round 34245512, at 2026-11-24T17:05:00Z), the same for every entry: one set of 8 openings each. Nobody, the organisers included, can know those openings while entries are taken. Practice: 3 instances from round 33447412, emitted before the opening, published in the kit; each dev submission runs one trial on the first, live only.
+
+    The final is staged. An entry needs a practice Elo of at least 1,154 to enter it (the house baseline rates about 1,325 on the practice set; the floor sits well under it, so one unlucky practice run does not keep out an entry that could place). The practice Elo is read from the entry you have in at the deadline, and an entry not yet graded on practice is graded on it first. An entry whose practice grade ends with no score through no result of its own play (the run failed) is graded on practice once more, and goes on to the first scored set without the floor if that run ends with no score too. Every entry past the floor plays the first of the 6 scored sets once, live. The 50 entrants with the highest Elo there, and anyone tied with the 50th, go on, the house baseline besides; an entry that runs out of its wall time there does not go on. A contender, one that goes on, plays the other 5 sets, and each of its 6 trials is replayed and must come out the same. Contenders rank on their mean Elo over the 6, and every paid place goes to a contender that also beats the baseline. An entry that stops at the first set ranks below every contender, by its Elo there; an entry under the floor ranks below those, by its practice Elo.
+
+    Every trial of a contender runs twice, live and then replayed, and the replay must leave the same state byte for byte: the same games, move for move, with the same results. A contender with a trial whose replay does not is listed and unranked. A practice trial, and the first-set trial of an entry that does not go on, runs live only. So derive every move from the position, the game's moves and the trial seed: no wall clock in your search, no unseeded randomness. The move limit is the one thing a clock decides, so keep every move well under it: a move near 10 seconds can fall on the other side of the limit on the replay, which makes the trial nondeterministic.
+
+    The whole trial has 1,800 seconds of wall time, the house's own thinking included (about 3 to 6 minutes of it: the env runs the house engines on half a CPU). A trial whose program is still running then is stopped and scores 0 on every column, Elo included, and a replay that runs out of time is nondeterministic. So budget about 3 seconds a move on average, even though one move may take up to 10 seconds.
+
+    A void is a fault that is never your entry's: the whole trial is void when the platform's machinery fails. A void counts for nothing: the trial runs again from the start on the same instance a minute later, at most twice; after a third void the trial waits for the organisers to run it again.
+
+    ## Ranking
+    Entries rank on their mean Elo, higher first: 1st place is the highest mean Elo. In the final the contenders rank above every other entry, on their mean over the 6 scored sets (see Trials). An exact tie goes to more plies to spare (the higher mean Plies to spare), then the earlier receipt. The leaderboard marks two entries as tied when the 90% paired t-interval of their per-instance Elo differences contains 0; a displayed tie never moves a place.
+
+    ## The house baseline
+    The house baseline is sunfish's 4 KB entry, the strongest public chess engine in 4 KB of Python, entered as an entry of its own (agent/sunfish-4k). Its source is nnue_4k/pst_entry.py of github.com/thomasahle/sunfish at commit e396948acbd80cdcbad3dccfb07e878fba9df8f4 (2026-08-27), by Thomas Ahle and contributors, GPL-3.0-only. The house replaced its UCI loop and its clock with a driver for this env and a fixed search of 50,000 nodes a move (the largest budget whose slowest move stays under 3 seconds on one CPU), stripped and minified it as sunfish's own packing script does and packed it as an lzma payload with its unpacker: 3,649 bytes of main.py. It is graded on every phase like any entry, plays all 6 scored sets beside the contenders, is flagged as the baseline, and takes no place, since no entry beats its own mean. On the 3 practice instances it rates 1,326, 1,396 and 1,253, a mean of 1,325. That is on their 8 games; on the 6-game practice trials it rates 1,364, 1,451 and 1,279, a mean of 1,365 (the same first 6 games: it lost all of its games against nodes-1M and nodes-2M).
+
+    The gate: a prize goes only to an entry whose mean Elo over the scored instances is above the baseline's mean with the 90% paired t-interval of its per-instance lead above 0 (each instance's two Elos paired, the same openings for both). Beating the baseline only qualifies an entry for a place: places still go by mean Elo, best first, and an entry above the baseline that ranks below the paid places wins nothing.
+
+    ## Runtime and sandbox
+    The program runs as python3 -P -s /bot/main.py on Python 3.13. Only the standard library is available: there is no install step, no package install, no native addons and no prebuilt binaries. starter/ in the kit is a working entry to start from (MIT, 2,996 bytes): a one-ply engine that plays the capture of the most valuable piece, to be replaced with a real search.
+
+    Each trial runs your program in a fresh container with a read-only /bot (your repository at the submitted commit), /input holding only prompt.txt, 1 CPU, 512 MB of memory, 64 processes and a wall budget of 1,800 seconds. It reaches only the env and the model gateway, which it must not call (see Model calls): no other network. The house engines run in the env's own container, never on your CPU or your move limit; the wall budget is the whole trial's, the house's thinking included.
+
+    ## Model calls
+    None. A chess engine in 4 KB needs no model, the house pays for none, and an entry that makes any model call, on any trial, is disqualified. The sandbox's environment still names a model gateway (ANTHROPIC_BASE_URL, OPENAI_BASE_URL and dummy keys) as every agent run's does; leave it alone. Do not push an API key to this competition.
+
+    ## Prizes
+    - 1st place: $100
+    - 2nd place: $70
+    - 3rd place: $50
+    - 4th to 10th place: $20 each
+    - 11th to 20th place: $14 each
+
+    The prizes total $500, paid by the house in USDC on Solana (see Payout). Places go down the ranking, best mean Elo first, one place per entrant, and a place goes only to a contender (an entry that played all 6 scored sets; see Trials) whose mean Elo is above the house baseline's (sunfish's 4 KB engine) with the 90% paired t-interval of its per-instance lead above 0. An entry that does not beat it keeps its rank but takes no place, and the next entry that beats it takes the place; until the house baseline is graded on the scored instances, no entry places. An entry the transcript gate rejected takes no place either. A house bot, an entry make.fun enters itself, ranks on the leaderboard like any other entry and must beat the baseline too. A house bot that finishes in a paid place holds that place, and that place's prize is not awarded; no entry moves up to take it. Any place that no entry is left to take is not awarded.
+
+    ## Submitting
+    - Sign in with a Solana wallet (Sign in with Solana), or sign in with GitHub. An agent that holds only a keypair signs in with it and gets an API key in one call (POST /api/auth/solana/key).
+    - A submission names a public GitHub repository and a commit, or uploads a source bundle made with `makefun bundle`, and carries the transcripts. The commit is snapshotted at submission and later pushes do not change the entry.
+    - An entry needs no signature here: the prizes are not escrowed, and a prize is claimed with the payout details alone (see Payout). An entry may still carry the entry signature: a wallet linked to your account signs the entry message (make.fun entry v1), which names this site, the competition, the repository, the commit, the sha256 of the transcripts uploaded with it, the wallet, a fresh nonce and the time it was issued. A signed message is good for 10 minutes and enters one submission only.
+    - The repository must be yours: its GitHub owner is the GitHub account you signed in with, or it holds the claim file .makefun/owner.json at the submitted commit, {"wallet": "<address>"}, naming a wallet linked to your account. It must also be created at or after the competition opens and carry an OSI-approved license that fits the size caps.
+    - A snapshot belongs to the first account that submits it: when a later account submits a snapshot identical to one already submitted, that submission is refused. Snapshots are identical when they hold the same files (the same paths, contents and file modes), whatever the commit. The claim file is left out of that comparison. You may submit your own snapshot again.
+    - Until the deadline the repository and commit of an entry are shown only to its entrant and the organisers; from the deadline they are public with the entry.
+    - Your repository is public on GitHub from the moment you create it, so anyone can read your code and see which GitHub account owns it before the results are published, even while this site hides it from other entrants.
+    - At most 5 submissions per entrant per UTC day, and at most 10 per entrant over the whole competition.
+    - Your final entry is your most recent submission with a receipt before the deadline. Its practice Elo decides whether it enters the final (at least 1,154; see Trials), so check its practice score before the deadline.
+    - Before the deadline only practice scores are shown.
+    - One account per person. A team enters under one account and splits any prize itself.
+
+    ## Transcripts
+    Every submission must include the transcripts of the AI coding-agent sessions that built it (Claude Code, Codex, Cursor, SpecStory, ChatGPT export or Claude export), as a makefun bundle or as loose files, up to 200 MB. Secrets are redacted on the server. The transcripts are matched against the code for authorship and priced for build cost. They are never published, the winners' included: only the entrant and make.fun's admins read them. Every entry's total build cost and build time (how long its agent worked) are public; its tokens and models are shown only to its entrant and the organisers, and no prize is paid on build cost. Code written by hand is allowed; it lowers authored coverage.
+
+    ## Transcript gate
+    Before an entry is graded, its transcripts pass a gate of nine pass/fail checks. The gate is never a score, and it has no AI judge and no AI-text detection. An entry that fails any check is rejected: it is not graded and takes no prize, and its status names each failed check with its fix, so you can fix it and submit again before the deadline.
+    - transcripts_present: at least one session is parsed from the upload.
+    - thinking_wellformed: every user, assistant and tool message of a session carries a timestamp, no assistant or tool message falls more than 60 s behind the latest before it, and every tool result answers one earlier tool call of its session.
+    - thinking_in_window: every transcript timestamp lies between the competition's opening and the entry's receipt time, give or take 60 s of clock skew.
+    - thinking_committed: for an entry that carries the entry signature, the transcripts uploaded are the ones it names (by their sha256); an unsigned entry skips this check.
+    - thinking_reproduces: the transcripts account for at least 30% of the counted lines (authored or pasted), and the entrypoint (main.py) has at least one authored line.
+    - thinking_turns: at least 5 assistant turns carry text or thinking (a turn that only calls tools does not count).
+    - thinking_priced: every usage record prices to a known model (an upload with no usage has nothing to price).
+    - thinking_revised: some file (the entrypoint, or the code it runs) takes its final content from at least 2 assistant messages that write or edit it (a file written once in full and never revised counts 1).
+    - thinking_fresh: for an entry uploaded as a source bundle, every credited line comes from agent sessions that show the anchor line the kit's init prints (makefun anchor <root sha> round <round>) in a tool result before their first counted write; short of that the entry is not rejected, but its prize, if it places, is held for review, and a quote timestamped before the round fails.
+
+    ## Disqualification
+    An entry or entrant is disqualified for:
+    - making any model call
+    - reading, importing, opening or running any file of the repository other than main.py, or data hidden anywhere but in main.py's own bytes (another file, a file's metadata or name, the environment, the env's answers beyond the games), to get round the size rule
+    - reaching for the network beyond the env, probing or escaping the sandbox, or attacking the grader, the env or the scorer
+    - fabricated, edited, withheld or borrowed transcripts
+    - submitting someone else's work as your own, or sharing entries between entrants; a fork of sunfish or another engine is allowed under its license, with its authors credited
+    - more than one account per person
+    - making the repository private, removing its license or rewriting history so the submitted commit disappears before verification is complete
+    - exploiting a bug in the env, the scorer or the generator to score what the games would not (report it instead)
+    - false information in a claim's payout details (the legal name, the country of residence or the tax form)
+
+    ## Payout
+    The final leaderboard is published within 7 days of the deadline, unless a check holds it. The prizes are not escrowed on chain: the house pays them, in USDC on Solana only (no bank wire). Once the results are resolved, each winner claims the prize within 7 days with the payout details: a Solana address to pay it to and the winner agreement. A legal name, the country of residence and a tax form (a W-9 for a US person, a W-8BEN for anyone else) are asked only when the winner's prizes from make.fun in the calendar year, this prize included, reach the $2,000 tax reporting threshold; below it, the claim asks for none of them. The claim is screened against the sanctions list, then the house pays it from its prize wallet in USDC on Solana: at once when the address is a wallet linked to the winner's account by signature and the automatic checks clear it, otherwise once the organisers have screened it. A prize not claimed within 7 days passes to the next entry in the standings.
+
+    Every prize is paid gross, subject to statutory withholding; any tax due on it is the winner's own.
+
+    Open to individuals 18 or older (or the age of majority where they live), except residents of comprehensively sanctioned countries, anyone on a sanctions list, and where prohibited by law.
+  resolution:
+    method: automated
+    summary: Each final entry with a practice Elo of at least 1,154 plays the 8-game gauntlet once, live, on the first of 6 sets of openings drawn 5 minutes after the deadline; the 50 best there and the house baseline play it on each of 6 sets of openings, live and then replayed, and those contenders rank on their mean Elo anchored to the house engines, best first, so the highest mean wins 1st place and $100, and twenty places pay $500 in all. Beating the house baseline, sunfish's 4 KB engine, only qualifies an entry for a place (a mean Elo above its mean with the 90% paired interval of the lead above 0); an entry above it that ranks below the paid places wins nothing.
+    criteria:
+      - "Harness: agent/v1; each trial runs the engine live against the env, which plays the house engines; every trial of a final contender is then replayed, and the games must come out byte for byte the same"
+      - "Size: main.py at most 4,096 bytes as committed, Python 3.13 and its standard library alone, reading no other file; the repository at most 8,192 bytes"
+      - "Games: 8 a trial, one against each of 8 house opponents, the colour alternating by opponent and by instance, from book openings; a game ends by the rules, by material adjudication at 200 plies (a lead of 5), on time at 10 seconds a move, or by resignation"
+      - "Instances: 6, drawn by the sealed generator from the first drand quicknet round emitted at or after the final phase starts, the same for every entry (practice: round 33447412, before the opening)"
+      - "Staged final: an entry needs a practice Elo of at least 1,154; every entry past it plays the first instance once, live, and the 50 entrants with the highest Elo there (any tied with the 50th included) and the house baseline play all 6; every paid place goes to one of those contenders"
+      - "Score: a trial's Elo is the maximum-likelihood rating given the opponents' anchors, from 0 to 2,112; a contender's score is the mean over its 6 trials; an entry that stops at the first instance ranks below every contender by its Elo there, and one under the floor below those by its practice Elo"
+      - "Prizes: $100 for 1st place, $70 for 2nd, $50 for 3rd, $20 each for 4th to 10th and $14 each for 11th to 20th, one place per entrant, paid by the house in USDC on Solana; a paid place a house bot holds is not awarded, and no entry moves up to take it"
+      - "Beat the baseline: a prize goes only to an entry whose mean Elo is above the house baseline's (sunfish's 4 KB engine) with the 90% paired t-interval of its per-instance lead above 0; an entry that does not beat it keeps its rank and takes no place, and a place no entry is left to take is not awarded"
+      - "Ties: an exact tie goes to more plies to spare, then the earlier receipt; a 90% paired t-interval containing 0 is a statistical tie, displayed only"
+      - "Reproducible: the generator, the env, the scorer, the calibration games, the practice instances and the scored round are published, and every trial's state export lets anyone rescore it"
+    source: The 6 gauntlets drawn from the scored drand round, and each trial's state export (every game's moves, result and reason)
+    verifier: make.fun grader runs every trial live, replays every contender's trials and scores each state with the sealed scorer, which re-plays every game under the rules; the results are published and resolved automatically
+    tie_break: An exact tie goes to more plies to spare, then the earlier receipt
+    announce: Final leaderboard within 7 days of the deadline unless a check holds it; winners claim within 7 days and are paid in USDC on Solana
+    metric:
+      name: Elo
+      unit: Elo points (0 to 2,112)
+      better: higher
+
+harness:
+  kind: agent/v1
+  # Python alone (the header): bytes of two languages are not comparable.
+  runtimes: [python3.13]
+  generator:
+    runtime: node22
+    entrypoint: generator/draw.mjs
+  env:
+    runtime: node22
+    entrypoint: env/server.mjs
+  scorer:
+    runtime: node22
+    entrypoint: scorer/score.mjs
+  generator_sha256: "6d1010231173de81549b4857ebbb81ec515f2a71683762c99dcca458b3bca261"
+  env_sha256: "c9ec5fd733c0243262e66a4562cbf1a9de08028d925c4c6bdbc0dec8c7a90ca8"
+  scorer_sha256: "10e864ee63a534b81f79fa86ac4026f803a484c7a3958cf4598518ef5585976e"
+  # The size rule (the header): main.py at most 4,096 bytes, the whole snapshot tree, main.py included, at
+  # most 8,192 and no file over 4,096; intake refuses a snapshot over either.
+  entry:
+    max_file_bytes: 4096
+    max_tree_bytes: 8192
+  # The competition does not require model calls (contracts/competition.ts AgentHarness.model_calls): the LLM agent
+  # floor is waived for every entry (grader/agent-score.ts heldToFloor, AgentEntryFacts.model_calls_optional), so a
+  # scripted engine, as every entry here is, is graded and scored with no trial of it zeroed and no run refused;
+  # with no target either, the dev kit's grade-local runs it with no API key (server/competitions/reproduce.ts
+  # agentKeyless).
+  model_calls: optional
+  # The contract's minimum (the header): the rules forbid model calls, so this only bounds one that is made.
+  inference:
+    models:
+      - claude-haiku-5-5
+    budget_usd_per_trial: 0.01
+    max_requests_per_trial: 1
+    max_output_tokens_per_request: 1
+    max_request_bytes: 4096
+    max_total_usd: 1
+    dev_daily_usd: 0.1
+  # The staged final (the header's Trials): a practice Elo of at least 1,154 enters it, every entry past that runs the
+  # first scored instance live, and the 50 best entrants there (ties with the 50th included) and the baseline run all 6.
+  trials:
+    final_instances: 6
+    practice_instances: 3
+    staged:
+      contenders: 50
+      practice_floor: 1154
+
+phases:
+  - key: dev
+    title: Practice openings
+    description: Each submission runs one trial, live only, on the first practice instance (trial 0 of round 33447412), 6 games against depth-2 to nodes-500k; scores appear as they finish, and the entry you have in at the deadline needs a practice Elo of at least 1,154 to enter the final.
+    starts_at: "2026-11-10T17:00:00Z"
+    ends_at: "2026-11-24T17:00:00Z"
+    scores: live
+  - key: final
+    title: Final
+    description: Every final entry past the practice floor runs one trial, live, on the first of the 6 instances drawn from the first drand round emitted at or after this phase starts, 5 minutes after the deadline, and the 50 best entrants there and the house baseline one trial on each of the 6 instances, live and then replayed; its scores appear with the results, published once the final grades and the checks after them are done.
+    starts_at: "2026-11-24T17:05:00Z"
+    ends_at: "2026-12-01T17:05:00Z"
+    scores: after_finalize
+
+# The scorer's columns (src/scorer/columns.ts SCORE_COLUMNS), each a mean over the trials: the rank column,
+# whole Elo points, rounded to 3 significant figures in public rows (the rules say so); the agent working
+# column (AGENT_WORKING_COLUMN); the games' results; Plies to spare, the efficiency tie-break (columns.ts
+# TIE_BREAK_COLUMN, more first).
+leaderboard:
+  title: Results
+  primary_index: 0
+  tie_break_index: 5
+  columns:
+    - {key: elo, title: Elo, index: 0, sorting: desc, precision: 0, significant_figures: 3}
+    - {key: working, title: Plays, index: 1, sorting: desc, precision: 2}
+    - {key: wins, title: Wins, index: 2, sorting: desc, precision: 2}
+    - {key: draws, title: Draws, index: 3, sorting: desc, precision: 2}
+    - {key: losses, title: Losses, index: 4, sorting: asc, precision: 2}
+    - {key: spare_plies, title: Plies to spare, index: 5, sorting: desc, precision: 1}
+
+# At most 5 submissions a day and 10 in all, per entrant (server/routes/submissions.ts quota). The
+# rules and the description quote both; change them together.
+submission_rule:
+  rule: Force_Last
+  max_per_day: 5
+  max_total: 10
+  transcripts_required: true
+  strategy_note_required: false
+  license: osi
+  repo_created_after_open: true
+  house_only: false
+
+# The release's $500 table (memecoin-backtest-48h-01's): $100 / $70 / $50 / $20 for 4th to 10th / $14 for
+# 11th to 20th. The rules' Prizes, the summary and the resolution quote it.
+prizes:
+  - {kind: placement, place: 1, amount_usd: 100, title: 1st place}
+  - {kind: placement, place: 2, amount_usd: 70, title: 2nd place}
+  - {kind: placement, place: 3, amount_usd: 50, title: 3rd place}
+  - {kind: placement, place: 4, amount_usd: 20, title: 4th place}
+  - {kind: placement, place: 5, amount_usd: 20, title: 5th place}
+  - {kind: placement, place: 6, amount_usd: 20, title: 6th place}
+  - {kind: placement, place: 7, amount_usd: 20, title: 7th place}
+  - {kind: placement, place: 8, amount_usd: 20, title: 8th place}
+  - {kind: placement, place: 9, amount_usd: 20, title: 9th place}
+  - {kind: placement, place: 10, amount_usd: 20, title: 10th place}
+  - {kind: placement, place: 11, amount_usd: 14, title: 11th place}
+  - {kind: placement, place: 12, amount_usd: 14, title: 12th place}
+  - {kind: placement, place: 13, amount_usd: 14, title: 13th place}
+  - {kind: placement, place: 14, amount_usd: 14, title: 14th place}
+  - {kind: placement, place: 15, amount_usd: 14, title: 15th place}
+  - {kind: placement, place: 16, amount_usd: 14, title: 16th place}
+  - {kind: placement, place: 17, amount_usd: 14, title: 17th place}
+  - {kind: placement, place: 18, amount_usd: 14, title: 18th place}
+  - {kind: placement, place: 19, amount_usd: 14, title: 19th place}
+  - {kind: placement, place: 20, amount_usd: 14, title: 20th place}
+
+limits:
+  cpus: 1
+  memory_mb: 512
+  pids: 64
+  wall_budget_sec: 1800
+
+# The efficiency view's authorship gate (bot-01's 0.80): no prize rides on that view.
+min_authored_coverage: 0.8
+
+# A placement prize needs a mean Elo above every published house baseline's (agent/sunfish-4k) with the 90%
+# paired t-interval of the per-instance lead above 0 (server/payouts/baseline.ts): an entry that does not
+# beat it keeps its rank but is not prize-eligible. The rules text quotes it.
+prize_requires_beating_baseline: true
+
+# A house entry that beats the baseline holds the place it finishes in, unpaid, and no entry moves up (the gate
+# baseline never beats itself, so it never holds one); the Prizes section says so.
+house_holds_places: true
+
+# Open (the header): the automation jobs lock it at its deadline, grade its final phase, publish and
+# resolve it; payouts auto keeps it off the escrow (the house pays on the manual rail).
+automation:
+  lifecycle: true
+  payouts: auto

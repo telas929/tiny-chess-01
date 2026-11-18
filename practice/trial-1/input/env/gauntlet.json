@@ -1,0 +1,123 @@
+{
+  "schema": "tiny-chess-01/gauntlet/v1",
+  "house_seed": "d67f836ba64efa36b77ea04e0eb7c3e48cd66790a6355c36e650e6de22c62cc3",
+  "max_plies": 200,
+  "adjudication_margin": 5,
+  "move_limit_ms": 10000,
+  "games": [
+    {
+      "game": 1,
+      "opponent": "depth-2",
+      "colour": "black",
+      "opening": {
+        "id": "sicilian-classical",
+        "name": "Sicilian Defence, Open with 2...Nc6",
+        "moves": [
+          "e2e4",
+          "c7c5",
+          "g1f3",
+          "b8c6",
+          "d2d4",
+          "c5d4",
+          "f3d4",
+          "g8f6"
+        ]
+      }
+    },
+    {
+      "game": 2,
+      "opponent": "depth-3",
+      "colour": "white",
+      "opening": {
+        "id": "catalan-opening",
+        "name": "Catalan Opening",
+        "moves": [
+          "d2d4",
+          "g8f6",
+          "c2c4",
+          "e7e6",
+          "g2g3",
+          "d7d5",
+          "f1g2",
+          "f8e7"
+        ]
+      }
+    },
+    {
+      "game": 3,
+      "opponent": "depth-4",
+      "colour": "black",
+      "opening": {
+        "id": "scandinavian-defence",
+        "name": "Scandinavian Defence",
+        "moves": [
+          "e2e4",
+          "d7d5",
+          "e4d5",
+          "d8d5",
+          "b1c3",
+          "d5a5",
+          "d2d4",
+          "g8f6"
+        ]
+      }
+    },
+    {
+      "game": 4,
+      "opponent": "nodes-100k",
+      "colour": "white",
+      "opening": {
+        "id": "ruy-lopez-morphy",
+        "name": "Ruy Lopez, Morphy Defence",
+        "moves": [
+          "e2e4",
+          "e7e5",
+          "g1f3",
+          "b8c6",
+          "f1b5",
+          "a7a6",
+          "b5a4",
+          "g8f6"
+        ]
+      }
+    },
+    {
+      "game": 5,
+      "opponent": "nodes-250k",
+      "colour": "black",
+      "opening": {
+        "id": "english-reversed-sicilian",
+        "name": "English Opening, Reversed Sicilian",
+        "moves": [
+          "c2c4",
+          "e7e5",
+          "b1c3",
+          "g8f6",
+          "g1f3",
+          "b8c6",
+          "g2g3",
+          "d7d5"
+        ]
+      }
+    },
+    {
+      "game": 6,
+      "opponent": "nodes-500k",
+      "colour": "white",
+      "opening": {
+        "id": "semi-slav",
+        "name": "Semi-Slav Defence",
+        "moves": [
+          "d2d4",
+          "d7d5",
+          "c2c4",
+          "c7c6",
+          "b1c3",
+          "g8f6",
+          "e2e3",
+          "e7e6"
+        ]
+      }
+    }
+  ]
+}

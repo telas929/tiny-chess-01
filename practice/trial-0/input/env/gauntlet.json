@@ -1,0 +1,123 @@
+{
+  "schema": "tiny-chess-01/gauntlet/v1",
+  "house_seed": "e56bc4f9fbec70672010a01cd7d0f8077a629c3f4bba25aa6067a6d701800c25",
+  "max_plies": 200,
+  "adjudication_margin": 5,
+  "move_limit_ms": 10000,
+  "games": [
+    {
+      "game": 1,
+      "opponent": "depth-2",
+      "colour": "white",
+      "opening": {
+        "id": "semi-slav",
+        "name": "Semi-Slav Defence",
+        "moves": [
+          "d2d4",
+          "d7d5",
+          "c2c4",
+          "c7c6",
+          "b1c3",
+          "g8f6",
+          "e2e3",
+          "e7e6"
+        ]
+      }
+    },
+    {
+      "game": 2,
+      "opponent": "depth-3",
+      "colour": "black",
+      "opening": {
+        "id": "sicilian-najdorf",
+        "name": "Sicilian Defence, Open with 2...d6",
+        "moves": [
+          "e2e4",
+          "c7c5",
+          "g1f3",
+          "d7d6",
+          "d2d4",
+          "c5d4",
+          "f3d4",
+          "g8f6"
+        ]
+      }
+    },
+    {
+      "game": 3,
+      "opponent": "depth-4",
+      "colour": "white",
+      "opening": {
+        "id": "italian-game",
+        "name": "Italian Game",
+        "moves": [
+          "e2e4",
+          "e7e5",
+          "g1f3",
+          "b8c6",
+          "f1c4",
+          "f8c5",
+          "c2c3",
+          "g8f6"
+        ]
+      }
+    },
+    {
+      "game": 4,
+      "opponent": "nodes-100k",
+      "colour": "black",
+      "opening": {
+        "id": "ruy-lopez-berlin",
+        "name": "Ruy Lopez, Berlin Defence",
+        "moves": [
+          "e2e4",
+          "e7e5",
+          "g1f3",
+          "b8c6",
+          "f1b5",
+          "g8f6",
+          "e1g1",
+          "f6e4"
+        ]
+      }
+    },
+    {
+      "game": 5,
+      "opponent": "nodes-250k",
+      "colour": "white",
+      "opening": {
+        "id": "slav-defence",
+        "name": "Slav Defence",
+        "moves": [
+          "d2d4",
+          "d7d5",
+          "c2c4",
+          "c7c6",
+          "g1f3",
+          "g8f6",
+          "b1c3",
+          "d5c4"
+        ]
+      }
+    },
+    {
+      "game": 6,
+      "opponent": "nodes-500k",
+      "colour": "black",
+      "opening": {
+        "id": "philidor-defence",
+        "name": "Philidor Defence",
+        "moves": [
+          "e2e4",
+          "e7e5",
+          "g1f3",
+          "d7d6",
+          "d2d4",
+          "g8f6",
+          "b1c3",
+          "b8d7"
+        ]
+      }
+    }
+  ]
+}

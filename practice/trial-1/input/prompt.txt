@@ -1,0 +1,47 @@
+tiny-chess-01: the strongest chess engine you can write in 4,096 bytes of Python. It plays the house gauntlet, one game after another.
+
+Your entry:
+  - main.py, at the repository's root, is the whole engine: at most 4,096 bytes as committed (comments, whitespace and docstrings count), Python 3.13 with the standard library only. It reads, imports and execs no other file of the repository. A main.py that unpacks and execs a compressed payload (lzma, zlib) is allowed; the payload and the unpacker both count toward its 4,096 bytes.
+  - It talks to the env alone, over HTTP. It calls no model and no other service: there is none to reach.
+  - It searches to a fixed depth or a fixed number of nodes, never to a clock (see Determinism).
+
+The house ladder: 8 engines, weakest first, each with the anchor your Elo is measured against. The depth rungs search every move to that depth; the node rungs deepen until the next depth would pass their node budget and play the last whole depth's move. None reads a clock.
+
+  rung 1  depth-2     anchored at  855  Alpha-beta, depth 2
+  rung 2  depth-3     anchored at 1073  Alpha-beta, depth 3
+  rung 3  depth-4     anchored at 1199  Alpha-beta, depth 4
+  rung 4  nodes-100k  anchored at 1392  Alpha-beta, 100,000 nodes
+  rung 5  nodes-250k  anchored at 1497  Alpha-beta, 250,000 nodes
+  rung 6  nodes-500k  anchored at 1596  Alpha-beta, 500,000 nodes
+  rung 7  nodes-1M    anchored at 1667  Alpha-beta, 1,000,000 nodes
+  rung 8  nodes-2M    anchored at 1712  Alpha-beta, 2,000,000 nodes
+
+You play 6 games, one against each of the first 6 rungs (a practice trial: the final's trials also play nodes-1M and nodes-2M), each from its own opening, in this order; your colour alternates from rung to rung (3 with white, 3 with black), and the next trial's instance gives you the other colour against each. Each starts from the standard start position with its opening's 8 plies played for both sides, so white moves first after the book; when you play black, the house has already made its move when you are served the position.
+
+  game  1  depth-2 (855), you play black; Sicilian Defence, Open with 2...Nc6: e2e4 c7c5 g1f3 b8c6 d2d4 c5d4 f3d4 g8f6
+  game  2  depth-3 (1073), you play white; Catalan Opening: d2d4 g8f6 c2c4 e7e6 g2g3 d7d5 f1g2 f8e7
+  game  3  depth-4 (1199), you play black; Scandinavian Defence: e2e4 d7d5 e4d5 d8d5 b1c3 d5a5 d2d4 g8f6
+  game  4  nodes-100k (1392), you play white; Ruy Lopez, Morphy Defence: e2e4 e7e5 g1f3 b8c6 f1b5 a7a6 b5a4 g8f6
+  game  5  nodes-250k (1497), you play black; English Opening, Reversed Sicilian: c2c4 e7e5 b1c3 g8f6 g1f3 b8c6 g2g3 d7d5
+  game  6  nodes-500k (1596), you play white; Semi-Slav Defence: d2d4 d7d5 c2c4 c7c6 b1c3 g8f6 e2e3 e7e6
+
+The env, at $MAKEFUN_ENV_URL, takes a POST of one JSON object on each route and answers one:
+  POST $MAKEFUN_ENV_URL/game    {}                                 the game in play; the first call, and the first after a game ends, starts the next game. Once every game is over: {"status": "done", "games", "wins", "draws", "losses"}
+  POST $MAKEFUN_ENV_URL/move    {"game": <n>, "move": "<uci>"}     your move in game n, the game in play; the house answers at once with its own
+  POST $MAKEFUN_ENV_URL/resign  {"game": <n>}                      you give game n up, a loss
+
+A game answer: {"game", "games", "opponent", "opponent_name", "colour" (yours), "opening": {"id", "name", "moves"}, "start_fen", "moves" (every move from the start position in UCI, the opening's included), "fen" (the position now), "plies", "last_move", "status" ("your_move" or "over"), "legal_moves" (yours, in UCI, while it is your move), "result" ("1-0", "0-1" or "1/2-1/2", white's side, once over), "outcome" ("win", "draw" or "loss", yours), "reason", "next_game", "move_limit_ms", "max_plies"}.
+
+Moves are UCI: from-square and to-square, and the promotion piece in lower case (e2e4, e7e8q); castling is the king's move (e1g1, e8c8). A move that is not legal is refused with HTTP 400 and changes nothing; send another.
+
+A game ends:
+  - by the rules: checkmate; a draw by stalemate, by insufficient material (no pawn, rook or queen left, and at most one knight or bishop, or only bishops all on squares of one colour), by the third occurrence of a position (same pieces, side to move, castling rights and en passant capture) or by 100 plies with no capture and no pawn move, each applied at once, no claim needed
+  - at the ply cap: a game still going after 200 plies from the start position (the opening's included) is adjudicated, won by the side ahead in material (pawn 1, knight 3, bishop 3, rook 5, queen 9) by at least 5, else drawn
+  - on time: your move must reach the env within 10,000 ms of the env serving the position (its answer to your last move, or to /game); a /move, /resign or /game for the game in play that comes later loses it on time. The house thinks on its own time, never on yours
+  - by your resignation; and a game in play when your program exits, or never started, is lost
+
+Time: the whole trial has 1,800 seconds of wall time, the house's own thinking included (about 3 to 6 minutes of it: the env runs the house engines on half a CPU). A trial still running then is stopped and scores 0. So budget about 3 seconds a move on average, even though one move may take up to 10 seconds.
+
+Score: each trial's Elo is the rating at which your expected points against these opponents' anchors (expected points of a game: 1 / (1 + 10^((anchor - R) / 400)); a win 1, a draw 1/2, a loss 0) add up to the points you scored, rounded to a whole number and held between 0 and 2,112: 0 when you score no more than a player rated 0 would expect, 2,112 when you win every game. Your entry ranks on its mean Elo over the trials; an exact tie goes to the more plies to spare (for each game won, the ply cap less the game's length, summed), then the earlier receipt.
+
+Determinism: your program must play the same moves given the same positions: no wall clock in your search, no unseeded randomness (MAKEFUN_TRIAL_SEED is a seed for any you need). Every trial of a final contender (an entry that goes on past the final's first instance) runs twice, live and then replayed, and the replay must leave the same games, move for move: search to a fixed depth or a fixed number of nodes, never to a time, and keep each move well inside the move limit.
